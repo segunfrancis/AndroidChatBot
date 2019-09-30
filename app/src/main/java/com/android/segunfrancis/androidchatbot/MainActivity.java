@@ -10,25 +10,28 @@ import ai.api.model.AIRequest;
 import ai.api.model.AIResponse;
 import ai.api.model.Result;
 import androidx.annotation.NonNull;
+import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import android.Manifest;
+import android.content.DialogInterface;
 import android.os.AsyncTask;
 import android.os.Bundle;
 import android.text.Editable;
 import android.text.TextUtils;
 import android.text.TextWatcher;
 import android.util.Log;
-import android.view.LayoutInflater;
+import android.view.Menu;
+import android.view.MenuItem;
 import android.view.View;
-import android.view.ViewGroup;
 import android.widget.EditText;
+import android.widget.Toast;
 
-import com.firebase.ui.database.FirebaseRecyclerAdapter;
-import com.firebase.ui.database.FirebaseRecyclerOptions;
+import com.google.android.gms.tasks.OnCompleteListener;
+import com.google.android.gms.tasks.Task;
 import com.google.android.material.floatingactionbutton.FloatingActionButton;
 import com.google.firebase.database.DataSnapshot;
 import com.google.firebase.database.DatabaseError;
@@ -36,16 +39,20 @@ import com.google.firebase.database.DatabaseReference;
 import com.google.firebase.database.FirebaseDatabase;
 import com.google.firebase.database.ValueEventListener;
 
+import java.util.ArrayList;
+import java.util.List;
+
 public class MainActivity extends AppCompatActivity implements AIListener {
 
     private static final String TAG = "MainActivity";
     RecyclerView mRecyclerView;
     EditText mEditText;
     DatabaseReference mReference;
-    FirebaseRecyclerAdapter<ChatMessage, ChatViewHolder> mAdapter;
     Boolean flagFab = true;
     FloatingActionButton fab;
     private AIService mAIService;
+    List<ChatMessage> mList;
+    ChatBotAdapter mChatBotAdapter;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -58,21 +65,26 @@ public class MainActivity extends AppCompatActivity implements AIListener {
         mEditText = findViewById(R.id.editText);
         fab = findViewById(R.id.floatingActionButton);
 
-        mRecyclerView.setHasFixedSize(true);
-        final LinearLayoutManager linearLayoutManager = new LinearLayoutManager(this);
-        linearLayoutManager.setStackFromEnd(true);
-        mRecyclerView.setLayoutManager(linearLayoutManager);
+        mList = new ArrayList<>();
 
+        mRecyclerView.setHasFixedSize(true);
+        final LinearLayoutManager layoutManager = new LinearLayoutManager(this);
+        mRecyclerView.setLayoutManager(layoutManager);
         mReference = FirebaseDatabase.getInstance().getReference();
         mReference.keepSynced(true);
 
-        final String[] clientAccessToken = new String[1];
 
-        mReference.child("ClientAccessToken").addListenerForSingleValueEvent(new ValueEventListener() {
+        mReference.child("chat").addValueEventListener(new ValueEventListener() {
             @Override
             public void onDataChange(@NonNull DataSnapshot dataSnapshot) {
-                clientAccessToken[0] = dataSnapshot.getValue(String.class);
-                Log.d(TAG, "onDataChange: clientAccessToken:" + clientAccessToken[0]);
+                mList.clear();
+                for (DataSnapshot snapshot : dataSnapshot.getChildren()) {
+                    ChatMessage message = snapshot.getValue(ChatMessage.class);
+                    mList.add(message);
+                }
+                mChatBotAdapter = new ChatBotAdapter(MainActivity.this, mList);
+                mRecyclerView.setAdapter(mChatBotAdapter);
+                mRecyclerView.scrollToPosition(mList.size() - 1);
             }
 
             @Override
@@ -81,7 +93,8 @@ public class MainActivity extends AppCompatActivity implements AIListener {
             }
         });
 
-        AIConfiguration config = new AIConfiguration(clientAccessToken[0],
+
+        AIConfiguration config = new AIConfiguration("8725c343946a4e13b315cb5e7ae4d1d3",
                 AIConfiguration.SupportedLanguages.English,
                 AIConfiguration.RecognitionEngine.System);
 
@@ -94,6 +107,8 @@ public class MainActivity extends AppCompatActivity implements AIListener {
         fab.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
+                int lastVisiblePosition = layoutManager.findLastVisibleItemPosition();
+                mRecyclerView.scrollToPosition(lastVisiblePosition);
                 String message = mEditText.getText().toString().trim();
                 if (!TextUtils.isEmpty(message)) {
                     ChatMessage chatMessage = new ChatMessage(message, "user");
@@ -138,7 +153,7 @@ public class MainActivity extends AppCompatActivity implements AIListener {
 
             @Override
             public void onTextChanged(CharSequence charSequence, int start, int before, int count) {
-                if (charSequence.toString().trim().length() != 0 && flagFab) {
+                if (charSequence.toString().trim().length() != 0) {
                     fab.setImageResource(R.drawable.ic_send);
                     flagFab = true;
                 } else {
@@ -152,48 +167,6 @@ public class MainActivity extends AppCompatActivity implements AIListener {
 
             }
         });
-
-        FirebaseRecyclerOptions<ChatMessage> options = new FirebaseRecyclerOptions.Builder<ChatMessage>().build();
-
-        mAdapter = new FirebaseRecyclerAdapter<ChatMessage, ChatViewHolder>(options) {
-            @Override
-            protected void onBindViewHolder(@NonNull ChatViewHolder holder, int position, @NonNull ChatMessage model) {
-                ChatMessage message = new ChatMessage();
-                if (message.getMsgUser().equals("user")) {
-                    holder.rightText.setText(message.getMsgText());
-
-                    holder.rightText.setVisibility(View.VISIBLE);
-                    holder.leftText.setVisibility(View.GONE);
-                } else {
-                    holder.leftText.setText(message.getMsgText());
-
-                    holder.rightText.setVisibility(View.GONE);
-                    holder.leftText.setVisibility(View.VISIBLE);
-                }
-            }
-
-            @NonNull
-            @Override
-            public ChatViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
-                View view = LayoutInflater.from(parent.getContext()).inflate(R.layout.message_list, parent, false);
-                return new ChatViewHolder(view);
-            }
-        };
-
-        mAdapter.registerAdapterDataObserver(new RecyclerView.AdapterDataObserver() {
-            @Override
-            public void onItemRangeInserted(int positionStart, int itemCount) {
-                super.onItemRangeInserted(positionStart, itemCount);
-
-                int msgCount = mAdapter.getItemCount();
-                int lastVisiblePosition = linearLayoutManager.findLastCompletelyVisibleItemPosition();
-                if (lastVisiblePosition == -1 || (positionStart >= (msgCount - 1) && lastVisiblePosition == (positionStart - 1))) {
-                    mRecyclerView.scrollToPosition(positionStart);
-                }
-            }
-        });
-
-        mRecyclerView.setAdapter(mAdapter);
     }
 
     /**
@@ -213,48 +186,76 @@ public class MainActivity extends AppCompatActivity implements AIListener {
         mReference.child("chat").push().setValue(chatMessage1);
     }
 
-    /**
-     * Event fires if something going wrong while recognition or access to the AI server
-     *
-     * @param error the error description object
-     */
     @Override
     public void onError(AIError error) {
 
     }
 
-    /**
-     * Event fires every time sound level changed. Use it to create visual feedback. There is no guarantee that this method will
-     * be called.
-     *
-     * @param level the new RMS dB value
-     */
     @Override
     public void onAudioLevel(float level) {
 
     }
 
-    /**
-     * Event fires when recognition engine start listening
-     */
     @Override
     public void onListeningStarted() {
 
     }
 
-    /**
-     * Event fires when recognition engine cancel listening
-     */
     @Override
     public void onListeningCanceled() {
 
     }
 
-    /**
-     * Event fires when recognition engine finish listening
-     */
     @Override
     public void onListeningFinished() {
 
+    }
+
+
+    /* ************************************ Menu ********************************************** */
+
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+        getMenuInflater().inflate(R.menu.menu_main, menu);
+        return true;
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(@NonNull MenuItem item) {
+        int id = item.getItemId();
+        if (id == R.id.delete_all_items) {
+            AlertDialog.Builder builder = new AlertDialog.Builder(this);
+            builder.setMessage("Are you sure you want to delete all chats?")
+                    .setTitle("Clear All Chat")
+                    .setPositiveButton("YES", new DialogInterface.OnClickListener() {
+                        @Override
+                        public void onClick(DialogInterface dialogInterface, int i) {
+                            deleteAllMessages();
+                            dialogInterface.dismiss();
+                        }
+                    })
+                    .setNegativeButton("NO", new DialogInterface.OnClickListener() {
+                        @Override
+                        public void onClick(DialogInterface dialogInterface, int i) {
+                            dialogInterface.dismiss();
+                        }
+                    });
+            builder.create().show();
+            return true;
+        }
+        return super.onOptionsItemSelected(item);
+    }
+
+    private void deleteAllMessages() {
+        mReference.child("chat").removeValue().addOnCompleteListener(new OnCompleteListener<Void>() {
+            @Override
+            public void onComplete(@NonNull Task<Void> task) {
+                if (task.isSuccessful()) {
+                    Toast.makeText(MainActivity.this, "All Chats have been cleared", Toast.LENGTH_SHORT).show();
+                } else {
+                    Toast.makeText(MainActivity.this, "Failed: \n" + task.getException(), Toast.LENGTH_SHORT).show();
+                }
+            }
+        });
     }
 }
